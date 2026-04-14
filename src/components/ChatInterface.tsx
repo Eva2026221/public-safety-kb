@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Send, Bot, User, RefreshCw, Lightbulb } from 'lucide-react'
 import type { ChatMessage } from '../types'
-import { generateAIResponse } from '../data/knowledgeBase'
+import { searchKnowledge } from '../data/knowledgeBase'
 
 const QUICK_QUESTIONS = [
   '防火管理人如何遴用？',
@@ -152,19 +152,74 @@ export default function ChatInterface() {
     setInputValue('')
     setIsLoading(true)
 
-    // 模擬 AI 思考延遲
-    await new Promise((resolve) => setTimeout(resolve, 800 + Math.random() * 600))
+    // 先用本地搜尋找到相關知識條目
+    const entries = searchKnowledge(text.trim())
 
-    const response = generateAIResponse(text)
+    // 建立佔位訊息，串流內容會逐步填入
+    const aiId = (Date.now() + 1).toString()
     const aiMessage: ChatMessage = {
-      id: (Date.now() + 1).toString(),
+      id: aiId,
       role: 'assistant',
-      content: response,
+      content: '',
       timestamp: new Date(),
     }
-
     setMessages((prev) => [...prev, aiMessage])
     setIsLoading(false)
+
+    try {
+      const res = await fetch('/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: text.trim(), entries }),
+      })
+
+      if (!res.ok || !res.body) {
+        throw new Error(`HTTP ${res.status}`)
+      }
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+
+        // SSE 以 \n\n 分隔事件
+        const parts = buffer.split('\n\n')
+        buffer = parts.pop() ?? ''
+
+        for (const part of parts) {
+          const line = part.trim()
+          if (!line.startsWith('data:')) continue
+          const data = line.slice(5).trim()
+          if (data === '[DONE]') break
+          try {
+            const parsed = JSON.parse(data)
+            if (parsed.error) throw new Error(parsed.error)
+            if (parsed.text) {
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === aiId ? { ...m, content: m.content + parsed.text } : m
+                )
+              )
+            }
+          } catch {
+            // 忽略解析錯誤，繼續讀取
+          }
+        }
+      }
+    } catch (err) {
+      const errMsg = err instanceof Error ? err.message : '連線錯誤'
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === aiId
+            ? { ...m, content: `（AI 回答失敗：${errMsg}，請稍後再試）` }
+            : m
+        )
+      )
+    }
   }
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -209,9 +264,9 @@ export default function ChatInterface() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-        {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
-        ))}
+        {messages.map((msg) =>
+          msg.content === '' ? null : <MessageBubble key={msg.id} message={msg} />
+        )}
         {isLoading && (
           <div className="flex gap-3">
             <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center flex-shrink-0">
@@ -226,6 +281,24 @@ export default function ChatInterface() {
             </div>
           </div>
         )}
+        {/* 串流中：最後一則 assistant 訊息內容為空時顯示點點 */}
+        {!isLoading && messages.length > 0 && (() => {
+          const last = messages[messages.length - 1]
+          return last.role === 'assistant' && last.content === '' ? (
+            <div className="flex gap-3" key="streaming-indicator">
+              <div className="w-8 h-8 rounded-full bg-slate-600 flex items-center justify-center flex-shrink-0">
+                <Bot className="w-4 h-4 text-white" />
+              </div>
+              <div className="bg-white rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm border border-gray-100">
+                <div className="flex gap-1 items-center h-5">
+                  <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
+              </div>
+            </div>
+          ) : null
+        })()}
         <div ref={bottomRef} />
       </div>
 
