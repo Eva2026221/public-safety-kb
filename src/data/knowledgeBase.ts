@@ -193,23 +193,40 @@ function scorePdfEntry(q: string, entry: KnowledgeEntry): number {
 }
 
 /**
+ * 顯示搜尋結果所需的最低相關度分數。
+ *
+ * 分數說明：
+ *   - 2 字關鍵字完整命中 = 6 分（過低，可能是偶發命中）
+ *   - 3 字關鍵字完整命中 = 9 分
+ *   - 4 字關鍵字完整命中 = 12 分
+ *   - 縣市匹配加成       = +15 分
+ *
+ * 門檻設為 10，要求至少：4 字關鍵字命中，或 3 字命中 + 文字語意加分，
+ * 或多個短關鍵字組合命中。單一 2 字關鍵字（分數 6）視為不足以顯示。
+ */
+export const SEARCH_SCORE_THRESHOLD = 10
+
+/**
  * 語意搜尋：靜態知識庫與 PDF 條目分別評分後合併排序。
  *
- * 靜態條目：MIN_SCORE = 6（嚴格，避免雜訊）
- * PDF 條目：MIN_SCORE = 4（寬鬆，因自動萃取文字與口語查詢存在用詞差距）
+ * @param minScore 靜態條目的最低顯示分數，預設 SEARCH_SCORE_THRESHOLD。
+ *   PDF 條目固定使用較低門檻（4），因自動萃取文字與口語查詢存在用詞差距。
  */
-export const searchKnowledge = (query: string, topK = 3): KnowledgeEntry[] => {
+export const searchKnowledge = (
+  query: string,
+  topK = 3,
+  minScore = SEARCH_SCORE_THRESHOLD,
+): KnowledgeEntry[] => {
   if (!query.trim()) return []
 
   const q = query.toLowerCase()
-  const STATIC_MIN = 6
   const PDF_MIN = 4
 
   const queryCounty = detectQueryCounty(q)
 
   const staticScored = knowledgeBase
     .map(entry => ({ entry, score: scoreStaticEntry(q, entry, queryCounty) }))
-    .filter(x => x.score >= STATIC_MIN)
+    .filter(x => x.score >= minScore)
 
   const pdfScored = _pdfEntries
     .map(entry => ({ entry, score: scorePdfEntry(q, entry) }))
@@ -266,7 +283,7 @@ function parseEntryMeta(answer: string) {
  * 過濾式搜尋：結構篩選 + 可選文字評分，只搜尋靜態知識庫。
  *
  * - 僅傳 filters：依風險等級排序後回傳全部符合條目
- * - 同時傳 query：先套用篩選，再依文字相關度排序（分數 < 6 者排到末尾）
+ * - 同時傳 query：先套用篩選，再依文字相關度排序（分數 < SEARCH_SCORE_THRESHOLD 者排除）
  * - topK：不傳表示回傳全部符合筆數
  */
 export function searchKnowledgeFiltered(
@@ -322,7 +339,7 @@ export function searchKnowledgeFiltered(
   })
 
   const out = hasQuery
-    ? candidates.filter(x => x.score >= 6)
+    ? candidates.filter(x => x.score >= SEARCH_SCORE_THRESHOLD)
     : candidates
 
   return (topK !== undefined ? out.slice(0, topK) : out).map(x => x.entry)
