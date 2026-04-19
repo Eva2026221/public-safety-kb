@@ -104,12 +104,38 @@ const ALL_PARSED = knowledgeBaseEntries.map(parseEntry)
 // 搜尋邏輯
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Entry A：文字查詢 — 使用評分引擎，只取分數最高的 1 筆 */
-function searchByText(query: string): ParsedEntry | null {
-  const rawResults = searchKnowledge(query, 1)
-  const found = rawResults[0]
-  if (!found) return null
-  return ALL_PARSED.find(p => p.raw === found) ?? null
+/** Entry A：文字查詢 — 使用評分引擎
+ *  - 若查詢已含縣市：只取 top-1（精準答覆）
+ *  - 若未含縣市但結果屬多個不同縣市：回傳 top-5 並標記 countyAmbiguous
+ *    （各縣市規定不同，不能僅顯示一縣市的結論）
+ *  - 其餘情況（全國通用）：只取 top-1
+ */
+function searchByText(query: string): { entries: ParsedEntry[]; countyAmbiguous: boolean } {
+  const qLower = query.toLowerCase()
+  const queryCounty = detectCounty(qLower)
+
+  if (queryCounty !== null) {
+    // 已指定縣市：回傳 top-1 精準答案
+    const rawResults = searchKnowledge(query, 1)
+    const entry = rawResults[0] ? (ALL_PARSED.find(p => p.raw === rawResults[0]) ?? null) : null
+    return { entries: entry ? [entry] : [], countyAmbiguous: false }
+  }
+
+  // 未指定縣市：取 top-5 後判斷是否縣市曖昧
+  const rawResults = searchKnowledge(query, 5)
+  if (rawResults.length === 0) return { entries: [], countyAmbiguous: false }
+
+  const parsed = rawResults
+    .map(r => ALL_PARSED.find(p => p.raw === r) ?? null)
+    .filter((p): p is ParsedEntry => p !== null)
+
+  // 結果中出現 2 個以上不同縣市 → 曖昧，需全部顯示
+  const counties = new Set(parsed.map(p => p.county).filter(c => c !== '全國通用'))
+  if (counties.size >= 2) {
+    return { entries: parsed, countyAmbiguous: true }
+  }
+
+  return { entries: parsed.slice(0, 1), countyAmbiguous: false }
 }
 
 /** Entry B：引導篩選 — 縣市/類組/情境三層過濾，按風險排序 */
@@ -624,10 +650,9 @@ export default function SmartQuery() {
   const [view, setView]         = useState<View>('home')
   const [results, setResults]   = useState<ResultState | null>(null)
 
-  // ── Entry A：文字查詢 — 只取分數最高 1 筆 ──
+  // ── Entry A：文字查詢 ──
   const handleTextSearch = (query: string) => {
-    const entry = searchByText(query)
-    const entries = entry ? [entry] : []
+    const { entries, countyAmbiguous } = searchByText(query)
     const tags: { label: string; icon: string }[] = []
 
     const q = query.toLowerCase()
@@ -638,6 +663,7 @@ export default function SmartQuery() {
     if (county) tags.push({ icon: '📍', label: county })
     if (group)  tags.push({ icon: '🏢', label: group  })
     if (stage)  tags.push({ icon: '📋', label: STAGE_OPTIONS.find(s => s.id === stage)?.label ?? stage })
+    if (countyAmbiguous) tags.push({ icon: '⚠️', label: '各縣市規定不同，請確認所在縣市' })
 
     setResults({ entries, tags, mode: 'text' })
     setView('results')
