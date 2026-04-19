@@ -71,6 +71,7 @@ interface ParsedEntry {
   topic: string
   scenario: string
   conclusion: string
+  conclusionBody: string   // 結論後的多行內容（如附件清單）
   explanation: string
   deficiency: string
   prohibited: string
@@ -85,7 +86,12 @@ function parseEntry(e: KnowledgeEntry): ParsedEntry {
   const topic       = a.match(/\*\*【[^】]+】\s*([^*\n]+?)(?:\*\*|\n)/)?.[1]?.trim() ?? ''
   const scenario    = (a.match(/\*\*情境：\*\*\s*(.+?)(?:\n|$)/)?.[1]
                     ?? a.match(/\*\*問：\*\*\s*(.+?)(?:\n|$)/)?.[1] ?? '').trim()
-  const conclusion  = a.match(/\*\*判斷結論：\*\*\s*(.+?)(?:\n|$)/)?.[1]?.trim() ?? ''
+  // 多行擷取：從「判斷結論：」到下一個 **CJK 區塊標題** 或 metadata 行
+  const conclusionFull = a.match(/\*\*判斷結論：\*\*\s*([\s\S]+?)(?=\n\*\*[\u4e00-\u9fff]|\n_|$)/)?.[1]?.trim() ?? ''
+  const conclusionLines = conclusionFull.split('\n')
+  const conclusion      = conclusionLines[0]?.trim() ?? ''
+  const conclusionBody  = conclusionLines.slice(1).join('\n').trim()
+
   const explanation = a.match(/\*\*實務說明：\*\*\s*(.+?)(?:\n|$)/)?.[1]?.trim() ?? ''
   const deficiency  = a.match(/\*\*缺失認定標準：\*\*\s*(.+?)(?:\n|$)/)?.[1]?.trim() ?? ''
   const prohibited  = a.match(/\*\*禁止事項：\*\*\s*(.+?)(?:\n|$)/)?.[1]?.trim() ?? ''
@@ -94,7 +100,7 @@ function parseEntry(e: KnowledgeEntry): ParsedEntry {
   const stage       = meta.match(/階段：([^\s　_\/]+(?:\/[^\s　_]+)?)/)?.[1] ?? ''
   const risk        = meta.match(/審件風險：([^\s　_]+)/)?.[1] ?? ''
   const id          = meta.match(/(WKB|BS)-[\w-]+/)?.[0] ?? ''
-  return { raw: e, id, county, topic, scenario, conclusion, explanation, deficiency, prohibited, group, stage, risk }
+  return { raw: e, id, county, topic, scenario, conclusion, conclusionBody, explanation, deficiency, prohibited, group, stage, risk }
 }
 
 // 全量預解析，避免每次查詢重複解析
@@ -220,8 +226,14 @@ function riskCls(risk: string) {
 // 結果卡片
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** 將 **bold** 語法渲染為 <strong>，其餘純文字 */
+function InlineMd({ text }: { text: string }) {
+  const parts = text.split(/\*\*(.+?)\*\*/g)
+  return <>{parts.map((p, i) => i % 2 === 1 ? <strong key={i}>{p}</strong> : p)}</>
+}
+
 function ResultCard({ entry }: { entry: ParsedEntry }) {
-  const { topic, scenario, conclusion, explanation, deficiency, prohibited, risk, id } = entry
+  const { topic, scenario, conclusion, conclusionBody, explanation, deficiency, prohibited, risk, id } = entry
   const t = conclusionTheme(conclusion)
 
   return (
@@ -259,6 +271,13 @@ function ResultCard({ entry }: { entry: ParsedEntry }) {
                 <span className={`text-[11px] font-bold uppercase tracking-widest ${t.label}`}>結論</span>
               </div>
               <p className={`text-xl font-black leading-snug ${t.text}`}>{conclusion}</p>
+              {conclusionBody && (
+                <div className={`mt-2 space-y-1 text-sm ${t.text} opacity-90`}>
+                  {conclusionBody.split('\n').filter(Boolean).map((line, i) => (
+                    <p key={i} className="leading-relaxed"><InlineMd text={line} /></p>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
