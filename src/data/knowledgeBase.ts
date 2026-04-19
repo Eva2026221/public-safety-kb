@@ -193,6 +193,57 @@ function scorePdfEntry(q: string, entry: KnowledgeEntry): number {
 }
 
 /**
+ * 當查詢包含縣市名時，驗證「主題部分」（去除縣市字串後的查詢）至少有一個匹配
+ * 到條目的關鍵字或全文，避免「縣市 + 完全不相關詞」僅靠縣市加分通過門檻。
+ *
+ * 判斷流程：
+ * 1. 從查詢移除屬於 queryCounty 的所有縣市前綴變體，取得主題部分
+ * 2. 主題部分為空（純縣市查詢）→ 不加額外限制，回傳 true
+ * 3. 否則：條目關鍵字（非縣市）有命中 OR 條目全文有 ≥2 字的主題詞命中 → true
+ */
+function hasTopicMatch(q: string, entry: KnowledgeEntry, queryCounty: string): boolean {
+  // 移除屬於 queryCounty 的所有縣市前綴（含簡繁、帶/不帶行政區字尾）
+  let topicQ = q
+  for (const [prefix, name] of COUNTY_PAIRS) {
+    if (name === queryCounty) {
+      topicQ = topicQ.split(prefix.toLowerCase()).join(' ')
+    }
+  }
+  topicQ = topicQ.replace(/\s+/g, ' ').trim()
+
+  const cjkBlocks  = topicQ.match(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]{2,}/g) ?? []
+  const asciiTokens = topicQ.match(/[a-z0-9]{2,}/gi) ?? []
+
+  // 主題部分為空 → 純縣市查詢，不加額外限制
+  if (cjkBlocks.length === 0 && asciiTokens.length === 0) return true
+
+  // ── 關鍵字命中（跳過縣市關鍵字本身）──
+  const countyNames = new Set(COUNTY_PAIRS.map(([, n]) => n.toLowerCase()))
+  const qExp = expandQuerySynonyms(topicQ)
+  for (const kw of entry.keywords) {
+    const kwl = kw.toLowerCase()
+    if (!countyNames.has(kwl) && qExp.includes(kwl)) return true
+  }
+
+  // ── 全文命中：主題 CJK 詞塊（≥2 字）──
+  const ans = entry.answer.toLowerCase()
+  for (const block of cjkBlocks) {
+    for (let len = Math.min(block.length, 4); len >= 2; len--) {
+      for (let i = 0; i <= block.length - len; i++) {
+        if (ans.includes(block.substring(i, i + len))) return true
+      }
+    }
+  }
+
+  // ── 全文命中：ASCII token ──
+  for (const token of asciiTokens) {
+    if (ans.includes(token.toLowerCase())) return true
+  }
+
+  return false
+}
+
+/**
  * 顯示搜尋結果所需的最低相關度分數。
  *
  * 分數說明：
@@ -227,6 +278,7 @@ export const searchKnowledge = (
   const staticScored = knowledgeBase
     .map(entry => ({ entry, score: scoreStaticEntry(q, entry, queryCounty) }))
     .filter(x => x.score >= minScore)
+    .filter(x => queryCounty === null || hasTopicMatch(q, x.entry, queryCounty))
 
   const pdfScored = _pdfEntries
     .map(entry => ({ entry, score: scorePdfEntry(q, entry) }))
