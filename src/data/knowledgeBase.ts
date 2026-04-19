@@ -193,16 +193,17 @@ function scorePdfEntry(q: string, entry: KnowledgeEntry): number {
 }
 
 /**
- * 當查詢包含縣市名時，驗證「主題部分」（去除縣市字串後的查詢）至少有一個匹配
- * 到條目的關鍵字或全文，避免「縣市 + 完全不相關詞」僅靠縣市加分通過門檻。
+ * 當查詢包含縣市名時，驗證查詢中「每一個」非縣市、非類組的主題詞都能在
+ * 條目的關鍵字或全文中找到對應，避免縣市加分帶出完全不相關的條目。
  *
  * 判斷流程：
- * 1. 從查詢移除屬於 queryCounty 的所有縣市前綴變體，取得主題部分
- * 2. 主題部分為空（純縣市查詢）→ 不加額外限制，回傳 true
- * 3. 否則：條目關鍵字（非縣市）有命中 OR 條目全文有 ≥2 字的主題詞命中 → true
+ * 1. 從查詢移除所有縣市前綴，取得主題部分
+ * 2. 過濾類組代碼（H1/H2/B1 等）後，若無剩餘主題詞 → 不加額外限制
+ * 3. 否則：主題部分的「每一個」詞都必須命中條目（ALL 語意，非 ANY）
+ *    - 關鍵字命中：條目關鍵字與詞有共同前綴（至少 2 字）
+ *    - 全文命中：詞（或長度 ≥3 的前綴）出現在條目答案中
  */
 function hasTopicMatch(q: string, entry: KnowledgeEntry, queryCounty: string): boolean {
-  // 移除屬於 queryCounty 的所有縣市前綴（含簡繁、帶/不帶行政區字尾）
   let topicQ = q
   for (const [prefix, name] of COUNTY_PAIRS) {
     if (name === queryCounty) {
@@ -211,36 +212,48 @@ function hasTopicMatch(q: string, entry: KnowledgeEntry, queryCounty: string): b
   }
   topicQ = topicQ.replace(/\s+/g, ' ').trim()
 
-  const cjkBlocks  = topicQ.match(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]{2,}/g) ?? []
-  const asciiTokens = topicQ.match(/[a-z0-9]{2,}/gi) ?? []
+  // 類組代碼：H1、H2、B1、B2 等（單字母 + 單數字）排除在主題詞要求之外
+  const isGroupCode = (s: string): boolean => /^[a-z][0-9]$/i.test(s)
 
-  // 主題部分為空 → 純縣市查詢，不加額外限制
+  const cjkBlocks   = topicQ.match(/[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]{2,}/g) ?? []
+  const asciiTokens = (topicQ.match(/[a-z0-9]{2,}/gi) ?? []).filter(t => !isGroupCode(t))
+
+  // 純縣市 / 類組查詢 → 不加額外限制
   if (cjkBlocks.length === 0 && asciiTokens.length === 0) return true
 
-  // ── 關鍵字命中（跳過縣市關鍵字本身）──
   const countyNames = new Set(COUNTY_PAIRS.map(([, n]) => n.toLowerCase()))
-  const qExp = expandQuerySynonyms(topicQ)
-  for (const kw of entry.keywords) {
-    const kwl = kw.toLowerCase()
-    if (!countyNames.has(kwl) && qExp.includes(kwl)) return true
-  }
-
-  // ── 全文命中：主題 CJK 詞塊（≥2 字）──
   const ans = entry.answer.toLowerCase()
-  for (const block of cjkBlocks) {
-    for (let len = Math.min(block.length, 4); len >= 2; len--) {
-      for (let i = 0; i <= block.length - len; i++) {
-        if (ans.includes(block.substring(i, i + len))) return true
+
+  // 判斷單一主題詞是否命中此條目
+  const tokenMatches = (token: string): boolean => {
+    const tokenL = token.toLowerCase()
+
+    // 關鍵字命中：條目關鍵字（非縣市、非類組）與 token 有共同前綴
+    for (const kw of entry.keywords) {
+      const kwl = kw.toLowerCase()
+      if (kwl.length >= 2 && !countyNames.has(kwl) && !isGroupCode(kwl)) {
+        if (kwl === tokenL || tokenL.startsWith(kwl) || kwl.startsWith(tokenL)) return true
       }
     }
+
+    // 全文命中：token（或 ≥minLen 的前綴）出現在答案中
+    const minLen = tokenL.length <= 2 ? 2 : 3
+    for (let len = tokenL.length; len >= minLen; len--) {
+      if (ans.includes(tokenL.substring(0, len))) return true
+    }
+
+    return false
   }
 
-  // ── 全文命中：ASCII token ──
+  // 每一個主題詞都必須命中（ALL，非 ANY）
+  for (const block of cjkBlocks) {
+    if (!tokenMatches(block)) return false
+  }
   for (const token of asciiTokens) {
-    if (ans.includes(token.toLowerCase())) return true
+    if (!tokenMatches(token)) return false
   }
 
-  return false
+  return true
 }
 
 /**
@@ -277,6 +290,12 @@ export const searchKnowledge = (
 
   const staticScored = knowledgeBase
     .map(entry => ({ entry, score: scoreStaticEntry(q, entry, queryCounty) }))
+    // 硬性縣市過濾：不同縣市的條目直接排除（不依賴扣分），通用條目保留
+    .filter(x => {
+      if (queryCounty === null) return true
+      const ec = getEntryCounty(x.entry)
+      return ec === null || ec === queryCounty
+    })
     .filter(x => x.score >= minScore)
     .filter(x => queryCounty === null || hasTopicMatch(q, x.entry, queryCounty))
 
