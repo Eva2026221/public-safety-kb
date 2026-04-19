@@ -408,7 +408,7 @@ function ResultsView({ entries, tags, mode, onBack, onGuided, onNewSearch }: Res
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 引導選單（Entry B）
+// 對話式引導（Entry B）
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface GuidedViewProps {
@@ -417,136 +417,195 @@ interface GuidedViewProps {
 }
 
 function GuidedView({ onResult, onCancel }: GuidedViewProps) {
-  const [step, setStep] = useState<0 | 1 | 2>(0)
-  const [county, setCounty] = useState('')
-  const [group, setGroup]   = useState('')
+  type ConvStep = 'county' | 'group' | 'stage' | 'done'
 
-  const pick = {
-    county: (c: string) => { setCounty(c); setStep(1) },
-    group:  (g: string) => { setGroup(g);  setStep(2) },
-    stage:  (s: string) => onResult(county, group, s),
+  interface Message {
+    from: 'bot' | 'user'
+    text: string
   }
 
-  const STEP_LABELS = ['縣市', '類組', '情境']
+  const [step, setStep]                   = useState<ConvStep>('county')
+  const [county, setCounty]               = useState('')
+  const [group, setGroup]                 = useState('')
+  const [messages, setMessages]           = useState<Message[]>([
+    { from: 'bot', text: '你好！讓我幫你找到最適合的規定。\n\n請問場所所在縣市是哪裡？' },
+  ])
+  const [showTyping, setShowTyping]       = useState(false)
+  const [showMoreCounties, setShowMoreCounties] = useState(false)
+  const bottomRef                         = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, showTyping])
+
+  const addBotMessage = (text: string, nextStep: ConvStep) => {
+    setShowTyping(true)
+    setTimeout(() => {
+      setShowTyping(false)
+      setMessages(m => [...m, { from: 'bot', text }])
+      setStep(nextStep)
+    }, 700)
+  }
+
+  const handleCounty = (c: string) => {
+    const label = c === 'all' ? '不限縣市（全部顯示）' : c
+    setCounty(c)
+    setMessages(m => [...m, { from: 'user', text: label }])
+    const name = c === 'all' ? '全部縣市' : c
+    addBotMessage(`了解，${name}。\n\n請問建物的類組是哪種？`, 'group')
+  }
+
+  const handleGroup = (g: string) => {
+    const label = GROUP_OPTIONS.find(o => o.id === g)?.sub ?? g
+    setGroup(g)
+    setMessages(m => [...m, { from: 'user', text: label }])
+    addBotMessage('好的！最後一個問題：\n\n目前作業處於哪個階段？', 'stage')
+  }
+
+  const handleStage = (s: string) => {
+    const label = STAGE_OPTIONS.find(o => o.id === s)?.label ?? s
+    setStep('done')
+    setMessages(m => [...m, { from: 'user', text: label }])
+    setShowTyping(true)
+    setTimeout(() => {
+      setShowTyping(false)
+      setMessages(m => [...m, { from: 'bot', text: '好的，正在為你搜尋符合的規定…' }])
+      setTimeout(() => onResult(county, group, s), 350)
+    }, 650)
+  }
 
   return (
-    <div className="flex flex-col h-full bg-gray-50">
-      {/* 引導頁頂部 */}
-      <div className="flex-shrink-0 bg-white border-b border-gray-200 px-4 py-3">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-sm font-semibold text-gray-700">引導查詢</span>
-          <button onClick={onCancel}
-            className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center text-gray-500 hover:bg-gray-200 transition-colors">
-            <X className="w-3.5 h-3.5" />
-          </button>
+    <div className="flex flex-col h-full bg-gradient-to-b from-slate-900 to-slate-800">
+      {/* 頂部列 */}
+      <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 border-b border-slate-700/60">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-full bg-police-600 flex items-center justify-center shadow-lg">
+            <HelpCircle className="w-4 h-4 text-white" />
+          </div>
+          <div>
+            <p className="text-sm font-bold text-white">引導查詢助手</p>
+            <p className="text-xs text-slate-400">一次一個問題，精準找到答案</p>
+          </div>
         </div>
-        {/* 步驟指示 */}
-        <div className="flex items-center gap-1">
-          {STEP_LABELS.map((label, i) => (
-            <div key={i} className="flex items-center gap-1">
-              <button
-                disabled={i >= step}
-                onClick={() => i < step ? setStep(i as 0 | 1 | 2) : undefined}
-                className={[
-                  'flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium transition-colors',
-                  i === step   ? 'bg-police-600 text-white'
-                  : i < step  ? 'bg-police-100 text-police-700 cursor-pointer hover:bg-police-200'
-                              : 'bg-gray-100 text-gray-400',
-                ].join(' ')}>
-                <span className={[
-                  'w-4 h-4 rounded-full flex items-center justify-center text-[10px] font-bold',
-                  i === step ? 'bg-white text-police-600' : i < step ? 'bg-police-300 text-white' : 'bg-gray-300 text-gray-500',
-                ].join(' ')}>
-                  {i < step ? '✓' : i + 1}
-                </span>
-                <span className="hidden sm:inline">{label}</span>
-              </button>
-              {i < 2 && <ChevronRight className="w-3 h-3 text-gray-300" />}
-            </div>
-          ))}
-        </div>
+        <button onClick={onCancel}
+          className="w-7 h-7 rounded-full bg-slate-700/60 flex items-center justify-center text-slate-400 hover:bg-slate-600/60 hover:text-white transition-colors">
+          <X className="w-3.5 h-3.5" />
+        </button>
       </div>
 
-      {/* 步驟內容 */}
-      <div className="flex-1 overflow-y-auto">
-        {/* Step 0 — 縣市 */}
-        {step === 0 && (
-          <div className="p-4 space-y-4">
-            <p className="text-xs font-semibold text-gray-500">選擇場所所在縣市</p>
-            <button onClick={() => pick.county('all')}
-              className="w-full py-3 rounded-xl bg-police-50 border-2 border-police-300 text-police-700 font-semibold text-sm hover:bg-police-100 transition-colors">
-              🌐　不限縣市（顯示全部）
-            </button>
-            <div>
-              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">六都直轄市</p>
-              <div className="grid grid-cols-3 gap-2">
-                {SIX_CITIES.map(c => (
-                  <button key={c} onClick={() => pick.county(c)}
-                    className="py-3 rounded-xl bg-white border border-gray-200 text-sm font-semibold text-gray-700 hover:bg-police-50 hover:border-police-400 hover:text-police-700 transition-colors shadow-sm">
-                    {c}
-                  </button>
-                ))}
+      {/* 對話區 */}
+      <div className="flex-1 overflow-y-auto px-4 py-5 space-y-4">
+        {messages.map((msg, i) => (
+          <div key={i} className={`flex items-end gap-2 ${msg.from === 'user' ? 'justify-end' : 'justify-start'}`}>
+            {msg.from === 'bot' && (
+              <div className="w-6 h-6 rounded-full bg-police-600 flex items-center justify-center flex-shrink-0 shadow">
+                <HelpCircle className="w-3 h-3 text-white" />
               </div>
+            )}
+            <div className={[
+              'max-w-[78%] px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-line shadow-md',
+              msg.from === 'bot'
+                ? 'bg-slate-700 text-slate-100 rounded-2xl rounded-bl-sm'
+                : 'bg-police-600 text-white rounded-2xl rounded-br-sm',
+            ].join(' ')}>
+              {msg.text}
             </div>
-            <div>
-              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">其他縣市</p>
-              <div className="grid grid-cols-4 gap-1.5">
-                {OTHER_COUNTIES.map(c => (
-                  <button key={c} onClick={() => pick.county(c)}
-                    className="py-2 rounded-lg bg-white border border-gray-200 text-xs font-medium text-gray-600 hover:bg-police-50 hover:border-police-400 hover:text-police-700 transition-colors shadow-sm">
-                    {c}
-                  </button>
-                ))}
-              </div>
+          </div>
+        ))}
+
+        {/* 打字動畫 */}
+        {showTyping && (
+          <div className="flex items-end gap-2 justify-start">
+            <div className="w-6 h-6 rounded-full bg-police-600 flex items-center justify-center flex-shrink-0 shadow">
+              <HelpCircle className="w-3 h-3 text-white" />
             </div>
-            <div>
-              <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">科學園區 / 特殊單位</p>
-              <div className="grid grid-cols-3 gap-2">
-                {SPECIAL_ZONES.map(c => (
-                  <button key={c} onClick={() => pick.county(c)}
-                    className="py-3 rounded-xl bg-amber-50 border border-amber-200 text-sm font-semibold text-amber-700 hover:bg-amber-100 transition-colors shadow-sm">
-                    {c}
-                  </button>
-                ))}
-              </div>
+            <div className="bg-slate-700 rounded-2xl rounded-bl-sm px-4 py-3 flex gap-1.5 items-center shadow-md">
+              <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce [animation-delay:0ms]" />
+              <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce [animation-delay:150ms]" />
+              <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce [animation-delay:300ms]" />
             </div>
           </div>
         )}
 
-        {/* Step 1 — 類組 */}
-        {step === 1 && (
-          <div className="p-4 space-y-3">
-            <p className="text-xs font-semibold text-gray-500">選擇場所建物類組</p>
-            <div className="grid grid-cols-2 gap-3">
+        <div ref={bottomRef} />
+      </div>
+
+      {/* 選項區 */}
+      {!showTyping && step !== 'done' && (
+        <div className="flex-shrink-0 border-t border-slate-700/60 bg-slate-800/80 px-4 py-4">
+          {step === 'county' && (
+            <div className="space-y-2.5">
+              <button onClick={() => handleCounty('all')}
+                className="w-full py-2.5 rounded-xl bg-police-600 text-white text-sm font-semibold hover:bg-police-500 active:scale-[0.98] transition-all shadow-lg">
+                🌐　不限縣市（顯示全部）
+              </button>
+              <div className="grid grid-cols-3 gap-2">
+                {SIX_CITIES.map(c => (
+                  <button key={c} onClick={() => handleCounty(c)}
+                    className="py-2.5 rounded-xl bg-slate-700 text-slate-200 text-sm font-semibold hover:bg-police-600 hover:text-white active:scale-[0.97] transition-all shadow-sm">
+                    {c}
+                  </button>
+                ))}
+              </div>
+              {!showMoreCounties ? (
+                <button onClick={() => setShowMoreCounties(true)}
+                  className="w-full py-1.5 text-xs text-slate-400 hover:text-slate-200 transition-colors">
+                  ▾ 其他縣市 / 科學園區
+                </button>
+              ) : (
+                <>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {OTHER_COUNTIES.map(c => (
+                      <button key={c} onClick={() => handleCounty(c)}
+                        className="py-1.5 rounded-lg bg-slate-700 text-slate-300 text-xs font-medium hover:bg-police-600 hover:text-white active:scale-[0.97] transition-all">
+                        {c}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {SPECIAL_ZONES.map(c => (
+                      <button key={c} onClick={() => handleCounty(c)}
+                        className="py-2 rounded-xl bg-amber-900/40 border border-amber-700/40 text-amber-400 text-sm font-medium hover:bg-amber-800/60 active:scale-[0.97] transition-all">
+                        {c}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {step === 'group' && (
+            <div className="grid grid-cols-2 gap-2.5">
               {GROUP_OPTIONS.map(g => (
-                <button key={g.id} onClick={() => pick.group(g.id)}
-                  className={`flex flex-col items-center justify-center p-5 rounded-2xl border-2 ${g.color} hover:opacity-90 active:opacity-75 transition-all shadow-sm`}>
-                  <span className="text-lg font-black">{g.id === 'all' ? '全部' : g.id}</span>
-                  <span className="text-xs font-semibold mt-1 text-center leading-tight">{g.sub.replace(/^[A-Z0-9類]+ /, '')}</span>
+                <button key={g.id} onClick={() => handleGroup(g.id)}
+                  className="flex flex-col items-center justify-center p-4 rounded-xl bg-slate-700 hover:bg-police-600 active:scale-[0.97] transition-all shadow-sm group">
+                  <span className="text-base font-black text-white">{g.id === 'all' ? '全部' : g.id}</span>
+                  <span className="text-xs mt-1 text-slate-400 group-hover:text-slate-200 transition-colors text-center leading-tight">
+                    {g.sub.replace(/^[A-Z0-9類]+ /, '')}
+                  </span>
                 </button>
               ))}
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Step 2 — 情境 */}
-        {step === 2 && (
-          <div className="p-4 space-y-2.5">
-            <p className="text-xs font-semibold text-gray-500">目前作業處於哪個階段？</p>
-            {STAGE_OPTIONS.map(s => (
-              <button key={s.id} onClick={() => pick.stage(s.id)}
-                className="w-full flex items-center gap-4 p-4 rounded-xl bg-white border-2 border-gray-200 hover:border-police-400 hover:bg-police-50 transition-all shadow-sm text-left">
-                <span className="text-2xl flex-shrink-0">{s.emoji}</span>
-                <div className="min-w-0">
-                  <div className="font-semibold text-gray-800 text-sm">{s.label}</div>
-                  <div className="text-xs text-gray-500 mt-0.5">{s.desc}</div>
-                </div>
-                <ChevronRight className="w-4 h-4 text-gray-300 ml-auto flex-shrink-0" />
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+          {step === 'stage' && (
+            <div className="space-y-2">
+              {STAGE_OPTIONS.map(s => (
+                <button key={s.id} onClick={() => handleStage(s.id)}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl bg-slate-700 hover:bg-police-600 active:scale-[0.99] transition-all shadow-sm text-left group">
+                  <span className="text-xl flex-shrink-0">{s.emoji}</span>
+                  <div className="min-w-0 flex-1">
+                    <div className="font-semibold text-sm text-white">{s.label}</div>
+                    <div className="text-xs text-slate-400 group-hover:text-slate-200 mt-0.5 transition-colors">{s.desc}</div>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-slate-500 group-hover:text-white flex-shrink-0 transition-colors" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -611,7 +670,7 @@ function HomeView({ onSearch, onGuided }: HomeViewProps) {
             </div>
             <div className="text-left">
               <p className="font-semibold text-sm">不知道怎麼問？</p>
-              <p className="text-xs text-police-500 mt-0.5">引導選擇縣市 → 類組 → 情境</p>
+              <p className="text-xs text-police-500 mt-0.5">三個問題，精準找到答案</p>
             </div>
           </div>
           <ChevronRight className="w-4 h-4 text-police-400 group-hover:translate-x-0.5 transition-transform" />
