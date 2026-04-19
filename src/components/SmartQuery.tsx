@@ -317,13 +317,43 @@ interface ResultsViewProps {
   entries: ParsedEntry[]
   tags: { label: string; icon: string }[]
   mode: 'text' | 'guided'
+  originalQuery?: string
   onBack: () => void
   onGuided: () => void
   onNewSearch: (q: string) => void
 }
 
-function ResultsView({ entries, tags, mode, onBack, onGuided, onNewSearch }: ResultsViewProps) {
-  const [q, setQ] = useState('')
+/** 根據原始查詢與已識別標籤，生成 2-3 個更精確的替換查詢建議。 */
+function generateRephraseSuggestions(
+  query: string,
+  tags: { label: string; icon: string }[],
+): string[] {
+  const hasCounty = tags.some(t => t.icon === '📍')
+  const hasGroup  = tags.some(t => t.icon === '🏢')
+  const hasStage  = tags.some(t => t.icon === '📋')
+  const q = query.trim()
+  const suggestions: string[] = []
+
+  if (!hasCounty) {
+    suggestions.push(`台北市 ${q}`)
+    suggestions.push(`桃園市 ${q}`)
+    if (suggestions.length < 3) suggestions.push(`高雄市 ${q}`)
+  }
+  if (!hasGroup && suggestions.length < 3) {
+    suggestions.push(`${q} H2集合住宅`)
+  }
+  if (!hasStage && suggestions.length < 3) {
+    suggestions.push(`${q} 現場檢查`)
+  }
+  if (suggestions.length === 0) {
+    suggestions.push(`${q} 缺失認定`, `${q} 相關規定`, `${q} 書表整理`)
+  }
+  return suggestions.slice(0, 3)
+}
+
+function ResultsView({ entries, tags, mode, originalQuery, onBack, onGuided, onNewSearch }: ResultsViewProps) {
+  const [q, setQ]                   = useState('')
+  const [showRephrase, setShowRephrase] = useState(false)
 
   const submit = () => {
     if (q.trim()) { onNewSearch(q.trim()); setQ('') }
@@ -361,19 +391,66 @@ function ResultsView({ entries, tags, mode, onBack, onGuided, onNewSearch }: Res
         {entries.length === 0 ? (
           /* ── 找不到 ── */
           mode === 'text' ? (
-            <div className="flex flex-col items-center justify-center py-16 text-center px-4">
-              <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mb-4">
-                <Search className="w-7 h-7 text-gray-400" />
+            <div className="flex flex-col items-center pt-10 px-4 space-y-3">
+              {/* 標題 */}
+              <div className="w-14 h-14 rounded-full bg-gray-100 flex items-center justify-center">
+                <Search className="w-6 h-6 text-gray-400" />
               </div>
               <p className="text-base font-bold text-gray-700">找不到相關資料</p>
-              <p className="text-sm text-gray-400 mt-2 leading-relaxed">
-                請換個方式描述問題，<br />例如加上縣市名稱或更具體的情境
-              </p>
-              <button onClick={onGuided}
-                className="mt-5 flex items-center gap-2 px-4 py-2.5 rounded-xl bg-police-600 text-white text-sm font-semibold hover:bg-police-700 transition-colors">
-                <HelpCircle className="w-4 h-4" />
-                改用引導查詢
-              </button>
+
+              {/* 選項卡列表 */}
+              <div className="w-full space-y-2.5 pt-1">
+
+                {/* 選項 1：換字建議 */}
+                <div className="w-full flex items-start gap-3 px-4 py-3.5 rounded-xl bg-white border border-gray-200 shadow-sm">
+                  <span className="text-lg flex-shrink-0 mt-0.5">📝</span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-gray-700">換個說法描述</p>
+                    <p className="text-xs text-gray-400 mt-0.5 leading-relaxed">
+                      加上縣市名稱、類組或情境關鍵字，<br />例如「台北市H2分戶門缺失」
+                    </p>
+                  </div>
+                </div>
+
+                {/* 選項 2：我幫你換個方式問（可展開） */}
+                <div className="w-full rounded-xl bg-amber-50 border border-amber-200 shadow-sm overflow-hidden">
+                  <button
+                    onClick={() => setShowRephrase(v => !v)}
+                    className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-amber-100 transition-colors">
+                    <span className="text-lg flex-shrink-0">💡</span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-amber-800">我幫你換個方式問</p>
+                      <p className="text-xs text-amber-600 mt-0.5">點擊查看建議的提問方式</p>
+                    </div>
+                    <ChevronRight className={`w-4 h-4 text-amber-400 flex-shrink-0 transition-transform duration-200 ${showRephrase ? 'rotate-90' : ''}`} />
+                  </button>
+
+                  {showRephrase && originalQuery && (
+                    <div className="px-4 pb-4 space-y-2 border-t border-amber-200 pt-3">
+                      <p className="text-[11px] font-semibold text-amber-700 uppercase tracking-wide">試試這樣問：</p>
+                      {generateRephraseSuggestions(originalQuery, tags).map((s, i) => (
+                        <button key={i} onClick={() => onNewSearch(s)}
+                          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-white border border-amber-200 text-sm text-gray-700 hover:bg-amber-100 hover:border-amber-400 transition-colors text-left">
+                          <span className="text-amber-500 font-bold flex-shrink-0">→</span>
+                          <span className="font-medium truncate">{s}</span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 選項 3：引導查詢 */}
+                <button onClick={onGuided}
+                  className="w-full flex items-center gap-3 px-4 py-3.5 rounded-xl bg-police-50 border border-police-200 shadow-sm hover:bg-police-100 hover:border-police-400 transition-colors text-left">
+                  <HelpCircle className="w-5 h-5 text-police-600 flex-shrink-0" />
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-police-700">改用引導查詢</p>
+                    <p className="text-xs text-police-500 mt-0.5">回答三個問題，精準找到適合的規定</p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-police-400 ml-auto flex-shrink-0" />
+                </button>
+
+              </div>
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -703,6 +780,7 @@ interface ResultState {
   entries: ParsedEntry[]
   tags: { label: string; icon: string }[]
   mode: 'text' | 'guided'
+  query?: string
 }
 
 export default function SmartQuery() {
@@ -724,7 +802,7 @@ export default function SmartQuery() {
     if (stage)  tags.push({ icon: '📋', label: STAGE_OPTIONS.find(s => s.id === stage)?.label ?? stage })
     if (countyAmbiguous) tags.push({ icon: '⚠️', label: '各縣市規定不同，請確認所在縣市' })
 
-    setResults({ entries, tags, mode: 'text' })
+    setResults({ entries, tags, mode: 'text', query })
     setView('results')
   }
 
@@ -753,6 +831,7 @@ export default function SmartQuery() {
           entries={results.entries}
           tags={results.tags}
           mode={results.mode}
+          originalQuery={results.query}
           onBack={() => setView('home')}
           onGuided={() => setView('guided')}
           onNewSearch={handleTextSearch}
