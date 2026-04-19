@@ -12,7 +12,7 @@ import {
   AlertTriangle, Info, BookOpen, CheckCircle2, X,
 } from 'lucide-react'
 import { knowledgeBaseEntries } from '../data/knowledgeBaseEntries'
-import { searchKnowledge } from '../data/knowledgeBase'
+import { searchKnowledge, SEARCH_SCORE_THRESHOLD } from '../data/knowledgeBase'
 import type { KnowledgeEntry } from '../types'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -105,6 +105,7 @@ const ALL_PARSED = knowledgeBaseEntries.map(parseEntry)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Entry A：文字查詢 — 使用評分引擎
+ *  - 所有結果需達 SEARCH_SCORE_THRESHOLD 門檻，低於門檻視為無結果
  *  - 若查詢已含縣市：只取 top-1（精準答覆）
  *  - 若未含縣市但結果屬多個不同縣市：回傳 top-5 並標記 countyAmbiguous
  *    （各縣市規定不同，不能僅顯示一縣市的結論）
@@ -116,13 +117,13 @@ function searchByText(query: string): { entries: ParsedEntry[]; countyAmbiguous:
 
   if (queryCounty !== null) {
     // 已指定縣市：回傳 top-1 精準答案
-    const rawResults = searchKnowledge(query, 1)
+    const rawResults = searchKnowledge(query, 1, SEARCH_SCORE_THRESHOLD)
     const entry = rawResults[0] ? (ALL_PARSED.find(p => p.raw === rawResults[0]) ?? null) : null
     return { entries: entry ? [entry] : [], countyAmbiguous: false }
   }
 
   // 未指定縣市：取 top-5 後判斷是否縣市曖昧
-  const rawResults = searchKnowledge(query, 5)
+  const rawResults = searchKnowledge(query, 5, SEARCH_SCORE_THRESHOLD)
   if (rawResults.length === 0) return { entries: [], countyAmbiguous: false }
 
   const parsed = rawResults
