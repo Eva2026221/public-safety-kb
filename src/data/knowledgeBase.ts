@@ -221,3 +221,110 @@ export const searchKnowledge = (query: string, topK = 3): KnowledgeEntry[] => {
     .map(x => x.entry)
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 過濾式搜尋
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** 結構化篩選條件。未傳或傳 'all' 表示不限該維度。 */
+export interface SearchFilters {
+  /** 縣市全名，如「台北市」；'all' 或不傳表示不限 */
+  county?: string
+  /** 類組 ID，如 'H2' | 'U2' | '學校' | 'G類'；'all' 或不傳表示不限 */
+  group?: string
+  /** 階段 ID，如 '書表整理' | '現場檢查' | '申報' | '申報前'；'all' 或不傳表示不限 */
+  stage?: string
+  /** 審件風險等級，'高' | '中' | '低'；不傳表示不限 */
+  risk?: string
+}
+
+// 階段 ID → 知識庫 metadata 中的階段值（一對多）
+const FILTER_STAGE_MATCH: Record<string, string[]> = {
+  '書表整理': ['書表整理', '現場檢查/書表整理'],
+  '現場檢查': ['現場檢查', '現場檢查/書表整理'],
+  '申報':     ['申報'],
+  '申報前':   ['申報前／評選準備'],
+}
+
+const RISK_ORDER: Record<string, number> = { '高': 0, '中': 1, '低': 2 }
+
+/** 從 answer 文字萃取條目所屬縣市（無則回傳「全國通用」）。 */
+function parseEntryCounty(answer: string): string {
+  return answer.match(/\*\*【([^】]+)】/)?.[1] ?? '全國通用'
+}
+
+/** 從 answer 尾部 metadata 行萃取類組、階段、審件風險。 */
+function parseEntryMeta(answer: string) {
+  const meta = answer.match(/_(WKB|BS)-\S+[^\n]*/)?.[0] ?? ''
+  return {
+    group: meta.match(/類組：([^\s　_]+)/)?.[1] ?? null,
+    stage: meta.match(/階段：([^\s　_\/]+(?:\/[^\s　_]+)?)/)?.[1] ?? '',
+    risk:  meta.match(/審件風險：([^\s　_]+)/)?.[1] ?? '',
+  }
+}
+
+/**
+ * 過濾式搜尋：結構篩選 + 可選文字評分，只搜尋靜態知識庫。
+ *
+ * - 僅傳 filters：依風險等級排序後回傳全部符合條目
+ * - 同時傳 query：先套用篩選，再依文字相關度排序（分數 < 6 者排到末尾）
+ * - topK：不傳表示回傳全部符合筆數
+ */
+export function searchKnowledgeFiltered(
+  query: string,
+  filters: SearchFilters = {},
+  topK?: number,
+): KnowledgeEntry[] {
+  const { county, group, stage, risk } = filters
+  const hasQuery = query.trim().length > 0
+  const q = query.toLowerCase()
+  const queryCounty = hasQuery ? detectQueryCounty(q) : null
+
+  type Candidate = { entry: KnowledgeEntry; score: number; risk: string; group: string | null }
+
+  const candidates: Candidate[] = []
+
+  for (const entry of knowledgeBase) {
+    const entryCounty = parseEntryCounty(entry.answer)
+    const meta = parseEntryMeta(entry.answer)
+
+    // ── 縣市篩選 ──
+    if (county && county !== 'all') {
+      if (entryCounty !== county && entryCounty !== '全國通用') continue
+    }
+
+    // ── 類組篩選：指定類組時，排除屬於其他類組的條目，保留通用條目（group === null） ──
+    if (group && group !== 'all') {
+      if (meta.group !== null && meta.group !== group) continue
+    }
+
+    // ── 階段篩選：指定階段時，排除 stage 不符的條目，空 stage 視為通用保留 ──
+    if (stage && stage !== 'all') {
+      const allowed = FILTER_STAGE_MATCH[stage] ?? []
+      if (meta.stage !== '' && !allowed.includes(meta.stage)) continue
+    }
+
+    // ── 風險篩選 ──
+    if (risk && meta.risk !== risk) continue
+
+    const score = hasQuery ? scoreStaticEntry(q, entry, queryCounty) : 0
+    candidates.push({ entry, score, risk: meta.risk, group: meta.group })
+  }
+
+  candidates.sort((a, b) => {
+    if (hasQuery) {
+      // 高分優先；同分時依風險排序
+      if (b.score !== a.score) return b.score - a.score
+    }
+    const rDiff = (RISK_ORDER[a.risk] ?? 3) - (RISK_ORDER[b.risk] ?? 3)
+    if (rDiff !== 0) return rDiff
+    // 有指定類組的條目優先於通用條目
+    return (a.group ? 0 : 1) - (b.group ? 0 : 1)
+  })
+
+  const out = hasQuery
+    ? candidates.filter(x => x.score >= 6)
+    : candidates
+
+  return (topK !== undefined ? out.slice(0, topK) : out).map(x => x.entry)
+}
+
