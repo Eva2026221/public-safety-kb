@@ -198,7 +198,7 @@ function scorePdfEntry(q: string, entry: KnowledgeEntry): number {
  * 靜態條目：MIN_SCORE = 6（嚴格，避免雜訊）
  * PDF 條目：MIN_SCORE = 4（寬鬆，因自動萃取文字與口語查詢存在用詞差距）
  */
-export const searchKnowledge = (query: string): KnowledgeEntry[] => {
+export const searchKnowledge = (query: string, topK = 3): KnowledgeEntry[] => {
   if (!query.trim()) return []
 
   const q = query.toLowerCase()
@@ -217,7 +217,7 @@ export const searchKnowledge = (query: string): KnowledgeEntry[] => {
 
   return [...staticScored, ...pdfScored]
     .sort((a, b) => b.score - a.score)
-    .slice(0, 3)
+    .slice(0, topK)
     .map(x => x.entry)
 }
 
