@@ -23,10 +23,16 @@ function isCJK(ch: string): boolean {
  * 判斷關鍵字命中是否為「嵌入式」匹配。
  * 當關鍵字左右兩側都緊鄰其他中文字時（例如查詢「戶外安全梯」命中關鍵字「安全梯」），
  * 表示該關鍵字是更長複合詞的一部分，並非獨立概念，應大幅降低得分。
+ *
+ * 例外：若相鄰字元為連接詞（和、與、及、或、但、、，等），
+ * 表示關鍵字為獨立詞組，不視為嵌入（例：「公安申報和消防申報有什麼不同」中的「消防申報」）。
  */
+const CJK_CONNECTIVES = new Set(['和', '與', '及', '或', '但', '、', '，', '。', '：', '；', '/', '、'])
 function isEmbeddedInCompound(text: string, keyword: string, idx: number): boolean {
   const charBefore = idx > 0 ? text[idx - 1] : ''
   const charAfter = idx + keyword.length < text.length ? text[idx + keyword.length] : ''
+  // 若相鄰為連接詞，該關鍵字為獨立詞組，不懲罰
+  if (CJK_CONNECTIVES.has(charBefore) || CJK_CONNECTIVES.has(charAfter)) return false
   return (
     isCJK(charBefore) && isCJK(keyword[0]) &&
     isCJK(charAfter) && isCJK(keyword[keyword.length - 1])
@@ -40,13 +46,25 @@ function isEmbeddedInCompound(text: string, keyword: string, idx: number): boole
  */
 function expandQuerySynonyms(q: string): string {
   let extra = ''
-  // 附件查詢意圖：文件、需要附、附什麼、附哪些、附清單
+  // 附件查詢意圖
   if (/需要附|附什麼|附哪些|哪些文件|什麼文件|所需文件|附件清單|要附什麼|要附哪/.test(q)) {
     extra += ' 附件'
   }
   // 書表/表單查詢意圖
   if (/要繳|繳什麼|送件要|送件需|要準備|準備什麼/.test(q)) {
     extra += ' 附件 書表'
+  }
+  // 罰款口語查詢：「被罰多少錢」「罰多少」「罰錢」→ 映射到正式詞「罰鍰」「處罰」「罰款」
+  if (/被罰|罰多少|罰錢|罰幾萬/.test(q)) {
+    extra += ' 罰款 罰鍰 處罰'
+  }
+  // 金額口語查詢：「多少錢」「多少費用」
+  if (/多少錢|多少費用|費用多少/.test(q)) {
+    extra += ' 金額 費用'
+  }
+  // 差異/不同 查詢：補充「差異」關鍵字
+  if (/有什麼不同|有何不同|差在哪|有差嗎/.test(q)) {
+    extra += ' 差異'
   }
   return q + extra
 }
