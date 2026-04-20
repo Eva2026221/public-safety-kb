@@ -340,11 +340,14 @@ function parseEntryCounty(answer: string): string {
   return answer.match(/\*\*【([^】]+)】/)?.[1] ?? '全國通用'
 }
 
-/** 從 answer 尾部 metadata 行萃取類組、階段、審件風險。 */
+/** 從 answer 尾部 metadata 行萃取類組、階段、審件風險。
+ *  「類組：全」視為全類組通用，對應 group = null。
+ */
 function parseEntryMeta(answer: string) {
   const meta = answer.match(/_(WKB|BS)-\S+[^\n]*/)?.[0] ?? ''
+  const rawGroup = meta.match(/類組：([^\s　_]+)/)?.[1] ?? null
   return {
-    group: meta.match(/類組：([^\s　_]+)/)?.[1] ?? null,
+    group: rawGroup === '全' ? null : rawGroup,
     stage: meta.match(/階段：([^\s　_\/]+(?:\/[^\s　_]+)?)/)?.[1] ?? '',
     risk:  meta.match(/審件風險：([^\s　_]+)/)?.[1] ?? '',
   }

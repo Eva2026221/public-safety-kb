@@ -86,19 +86,34 @@ function parseEntry(e: KnowledgeEntry): ParsedEntry {
   const topic       = a.match(/\*\*【[^】]+】\s*([^*\n]+?)(?:\*\*|\n)/)?.[1]?.trim() ?? ''
   const scenario    = (a.match(/\*\*情境：\*\*\s*(.+?)(?:\n|$)/)?.[1]
                     ?? a.match(/\*\*問：\*\*\s*(.+?)(?:\n|$)/)?.[1] ?? '').trim()
-  // 多行擷取：從「判斷結論：」到下一個 **CJK 區塊標題** 或 metadata 行；Q&A 格式 fallback 取「答：」第一句
+  // 判斷結論：標準格式；Q&A 格式（**答：**）fallback
+  const isQA = /\*\*答：\*\*/.test(a)
   const conclusionFull = a.match(/\*\*判斷結論：\*\*\s*([\s\S]+?)(?=\n\*\*[\u4e00-\u9fff]|\n_|$)/)?.[1]?.trim()
-    ?? a.match(/\*\*答：\*\*\s*([\s\S]+?)(?=\n\*\*[\u4e00-\u9fff]|\n_|$)/)?.[1]?.trim()
+    ?? a.match(/\*\*答：\*\*\s*([\s\S]+?)(?=\n_|$)/)?.[1]?.trim()
     ?? ''
-  const conclusionLines = conclusionFull.split('\n')
-  const conclusion      = conclusionLines[0]?.trim() ?? ''
-  const conclusionBody  = conclusionLines.slice(1).join('\n').trim()
+
+  let conclusion: string
+  let conclusionBody: string
+  if (isQA && conclusionFull) {
+    // Q&A 格式：將段落內的 PDF 斷行合併，取第一段為結論（限 130 字）
+    const paras = conclusionFull.split(/\n\s*\n/).map(p =>
+      p.split('\n').map(l => l.trim()).filter(Boolean).join('')
+    ).filter(Boolean)
+    const first = paras[0] ?? ''
+    conclusion     = first.length > 130 ? first.substring(0, 130) + '…' : first
+    conclusionBody = paras.slice(1).join('\n\n').trim()
+  } else {
+    const lines = conclusionFull.split('\n')
+    conclusion     = lines[0]?.trim() ?? ''
+    conclusionBody = lines.slice(1).join('\n').trim()
+  }
 
   const explanation = a.match(/\*\*實務說明：\*\*\s*(.+?)(?:\n|$)/)?.[1]?.trim() ?? ''
   const deficiency  = a.match(/\*\*缺失認定標準：\*\*\s*(.+?)(?:\n|$)/)?.[1]?.trim() ?? ''
   const prohibited  = a.match(/\*\*禁止事項：\*\*\s*(.+?)(?:\n|$)/)?.[1]?.trim() ?? ''
   const meta        = a.match(/_(WKB|BS)-\S+[^\n]*/)?.[0] ?? ''
-  const group       = meta.match(/類組：([^\s　_]+)/)?.[1] ?? null
+  const rawGroup    = meta.match(/類組：([^\s　_]+)/)?.[1] ?? null
+  const group       = rawGroup === '全' ? null : rawGroup
   const stage       = meta.match(/階段：([^\s　_\/]+(?:\/[^\s　_]+)?)/)?.[1] ?? ''
   const risk        = meta.match(/審件風險：([^\s　_]+)/)?.[1] ?? ''
   const id          = meta.match(/(WKB|BS)-[\w-]+/)?.[0] ?? ''
@@ -273,13 +288,20 @@ function ResultCard({ entry }: { entry: ParsedEntry }) {
                 <span className={`text-[11px] font-bold uppercase tracking-widest ${t.label}`}>結論</span>
               </div>
               <p className={`text-xl font-black leading-snug ${t.text}`}>{conclusion}</p>
-              {conclusionBody && (
-                <div className={`mt-2 space-y-1 text-sm ${t.text} opacity-90`}>
-                  {conclusionBody.split('\n').filter(Boolean).map((line, i) => (
-                    <p key={i} className="leading-relaxed"><InlineMd text={line} /></p>
-                  ))}
-                </div>
-              )}
+              {conclusionBody && (() => {
+                const bodyLines = conclusionBody.split('\n').filter(Boolean)
+                const MAX = 15
+                return (
+                  <div className={`mt-2 space-y-1 text-sm ${t.text} opacity-90`}>
+                    {bodyLines.slice(0, MAX).map((line, i) => (
+                      <p key={i} className="leading-relaxed"><InlineMd text={line} /></p>
+                    ))}
+                    {bodyLines.length > MAX && (
+                      <p className="text-xs opacity-50 pt-1">…（共 {bodyLines.length} 行，顯示前 {MAX} 行）</p>
+                    )}
+                  </div>
+                )
+              })()}
             </div>
           </div>
         )}
