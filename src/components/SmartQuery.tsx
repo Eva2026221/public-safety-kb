@@ -86,8 +86,10 @@ function parseEntry(e: KnowledgeEntry): ParsedEntry {
   const topic       = a.match(/\*\*【[^】]+】\s*([^*\n]+?)(?:\*\*|\n)/)?.[1]?.trim() ?? ''
   const scenario    = (a.match(/\*\*情境：\*\*\s*(.+?)(?:\n|$)/)?.[1]
                     ?? a.match(/\*\*問：\*\*\s*(.+?)(?:\n|$)/)?.[1] ?? '').trim()
-  // 多行擷取：從「判斷結論：」到下一個 **CJK 區塊標題** 或 metadata 行
-  const conclusionFull = a.match(/\*\*判斷結論：\*\*\s*([\s\S]+?)(?=\n\*\*[\u4e00-\u9fff]|\n_|$)/)?.[1]?.trim() ?? ''
+  // 多行擷取：從「判斷結論：」到下一個 **CJK 區塊標題** 或 metadata 行；Q&A 格式 fallback 取「答：」第一句
+  const conclusionFull = a.match(/\*\*判斷結論：\*\*\s*([\s\S]+?)(?=\n\*\*[\u4e00-\u9fff]|\n_|$)/)?.[1]?.trim()
+    ?? a.match(/\*\*答：\*\*\s*([\s\S]+?)(?=\n\*\*[\u4e00-\u9fff]|\n_|$)/)?.[1]?.trim()
+    ?? ''
   const conclusionLines = conclusionFull.split('\n')
   const conclusion      = conclusionLines[0]?.trim() ?? ''
   const conclusionBody  = conclusionLines.slice(1).join('\n').trim()
