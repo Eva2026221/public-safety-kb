@@ -66,6 +66,10 @@ function expandQuerySynonyms(q: string): string {
   if (/有什麼不同|有何不同|差在哪|有差嗎/.test(q)) {
     extra += ' 差異'
   }
+  // 公安口語 → 公共安全正式用詞（條目多用正式名稱）
+  if (/公安申報|公安檢查/.test(q)) {
+    extra += ' 公共安全'
+  }
   return q + extra
 }
 
@@ -223,6 +227,8 @@ function scorePdfEntry(q: string, entry: KnowledgeEntry): number {
  */
 function hasTopicMatch(q: string, entry: KnowledgeEntry, queryCounty: string): boolean {
   let topicQ = q
+  // 先移除完整縣市名（如「台北市」），避免僅移除前綴後留下「市」殘字
+  topicQ = topicQ.split(queryCounty.toLowerCase()).join(' ')
   for (const [prefix, name] of COUNTY_PAIRS) {
     if (name === queryCounty) {
       topicQ = topicQ.split(prefix.toLowerCase()).join(' ')
