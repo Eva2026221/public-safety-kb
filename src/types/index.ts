@@ -19,9 +19,10 @@ export interface Entry {
 
 // ─── 搜尋結果分類 ────────────────────────────────────────────────────────────
 export type SearchPhase =
-  | { kind: 'answer';     entry: Entry }
-  | { kind: 'ambiguous';  question: AmbigQuestion; candidates: Entry[] }
-  | { kind: 'not_found';  query: string }
+  | { kind: 'answer';          entry: Entry }
+  | { kind: 'low_confidence';  candidates: Entry[] }
+  | { kind: 'ambiguous';       question: AmbigQuestion; candidates: Entry[] }
+  | { kind: 'not_found';       query: string }
   | { kind: 'idle' }
 
 export interface AmbigQuestion {

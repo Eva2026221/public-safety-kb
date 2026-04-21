@@ -119,6 +119,57 @@ function AnswerCard({ entry }: { entry: Entry }) {
   )
 }
 
+// ── 低信心：多筆候選 ──────────────────────────────────────────────────────────
+function LowConfidenceView({ candidates, onSelect, onReset }: {
+  candidates: Entry[]
+  onSelect: (e: Entry) => void
+  onReset: () => void
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Info className="w-4 h-4 text-amber-500" />
+          <p className="text-sm font-medium text-amber-700">找到多筆可能相關的資料，請選擇最符合的：</p>
+        </div>
+        <button onClick={onReset} className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700">
+          <ArrowLeft className="w-3 h-3" />
+          重新查詢
+        </button>
+      </div>
+      <div className="space-y-2">
+        {candidates.map(e => (
+          <button
+            key={e.id}
+            onClick={() => onSelect(e)}
+            className="w-full text-left px-4 py-3 rounded-xl border border-gray-200 bg-white hover:bg-blue-50 hover:border-blue-300 transition-colors shadow-sm"
+          >
+            <div className="flex items-start gap-2">
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-gray-800 text-sm">{e.topic}</p>
+                <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{e.conclusion}</p>
+              </div>
+              <div className="flex flex-col items-end gap-1 shrink-0">
+                {e.county !== '全國通用' && (
+                  <span className="text-xs px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 border border-blue-200">
+                    {e.county}
+                  </span>
+                )}
+                {e.risk && (
+                  <span className={`text-xs px-1.5 py-0.5 rounded-full border ${riskColor(e.risk)}`}>
+                    {e.risk}
+                  </span>
+                )}
+              </div>
+            </div>
+          </button>
+        ))}
+      </div>
+      <p className="text-xs text-center text-gray-400">或換個關鍵字重新搜尋</p>
+    </div>
+  )
+}
+
 // ── 找不到畫面 ───────────────────────────────────────────────────────────────
 function NotFoundView({ query, onReset }: { query: string; onReset: () => void }) {
   return (
@@ -291,6 +342,15 @@ export default function SmartQuery() {
                 ))}
               </div>
             </div>
+          )}
+
+          {/* 低信心候選清單 */}
+          {phase.kind === 'low_confidence' && (
+            <LowConfidenceView
+              candidates={phase.candidates}
+              onSelect={e => setPhase({ kind: 'answer', entry: e })}
+              onReset={handleReset}
+            />
           )}
 
           {/* 答案 */}

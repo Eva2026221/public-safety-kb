@@ -153,8 +153,8 @@ export interface SearchOptions {
   topK?: number
 }
 
-export function search(query: string, opts: SearchOptions = {}): Entry[] {
-  if (!query.trim()) return []
+function _searchWithScore(query: string, opts: SearchOptions = {}): { hits: Entry[]; topScore: number } {
+  if (!query.trim()) return { hits: [], topScore: 0 }
 
   const county = opts.county !== undefined ? opts.county : detectCounty(query)
   const group  = opts.group  !== undefined ? opts.group  : detectGroup(query)
@@ -162,7 +162,7 @@ export function search(query: string, opts: SearchOptions = {}): Entry[] {
 
   const expanded = expandQuery(query)
   const terms = extractTerms(expanded)
-  if (terms.length === 0) return []
+  if (terms.length === 0) return { hits: [], topScore: 0 }
 
   // 縣市過濾
   let pool: Entry[] = county
@@ -194,35 +194,48 @@ export function search(query: string, opts: SearchOptions = {}): Entry[] {
   qaScored.sort((a, b) => b.score - a.score)
   const qaHits = qaScored.slice(0, topK).map(s => s.entry)
 
-  if (qaHits.length >= topK) return qaHits
+  if (qaHits.length >= topK) return { hits: qaHits, topScore: qaScored[0]?.score ?? 0 }
 
   // qa 不足才補 regulation
   const need = topK - qaHits.length
-  const regHits: Entry[] = regPool
+  const regScored: Scored[] = regPool
     .map(e => ({ entry: e, score: scoreEntry(terms, e) }))
     .filter(x => x.score >= MIN_SCORE * 1.5) // regulation 門檻更高
     .sort((a, b) => b.score - a.score)
     .slice(0, need)
-    .map(s => s.entry)
 
-  return [...qaHits, ...regHits]
+  return {
+    hits: [...qaHits, ...regScored.map(s => s.entry)],
+    topScore: qaScored[0]?.score ?? regScored[0]?.score ?? 0,
+  }
+}
+
+export function search(query: string, opts: SearchOptions = {}): Entry[] {
+  return _searchWithScore(query, opts).hits
 }
 
 // ── 分類結果 ─────────────────────────────────────────────────────────────────
+const HIGH_CONFIDENCE_SCORE = 50
+
 export function classify(query: string, forceCounty?: string | null): SearchPhase {
   if (!query.trim()) return { kind: 'idle' }
 
   const county = forceCounty !== undefined ? forceCounty : detectCounty(query)
-  const results = search(query, { county, topK: 8 })
+  const { hits: results, topScore } = _searchWithScore(query, { county, topK: 8 })
 
   if (results.length === 0) return { kind: 'not_found', query }
+
+  // 低信心：分數不夠高且有多筆結果，不強迫給出單一答案
+  if (topScore < HIGH_CONFIDENCE_SCORE && results.length > 1) {
+    return { kind: 'low_confidence', candidates: results.slice(0, 5) }
+  }
+
   if (results.length === 1) return { kind: 'answer', entry: results[0] }
 
   const conclusions = new Set(results.map(e => e.conclusion))
   if (conclusions.size === 1) return { kind: 'answer', entry: results[0] }
 
   // 全國通用條目排第一 → 直接回傳，無需詢問縣市
-  // 搜尋引擎已依分數排名，第一名即為最佳解答
   if (results[0].county === '全國通用') {
     return { kind: 'answer', entry: results[0] }
   }
