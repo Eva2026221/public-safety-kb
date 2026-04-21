@@ -1,6 +1,7 @@
 // ─── 知識庫條目（新結構） ────────────────────────────────────────────────────
 export interface Entry {
   id: string              // "WKB-009" | "BS-200"
+  type: 'qa' | 'regulation'  // qa = 實務Q&A, regulation = 法規解釋函
   county: string          // "台北市" | "全國通用" | "新北市" ...
   group: string | null    // "H2" | "U2" | "學校" | "G類" | null（null = 全類組適用）
   stage: string           // "現場檢查" | "書表整理" | "申報" | "申報前" | ""

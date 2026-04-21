@@ -98,20 +98,32 @@ function expandQuery(q: string): string {
   return expanded
 }
 
-// ── Fuse.js 索引 ─────────────────────────────────────────────────────────────
-const fuseOptions: IFuseOptions<Entry> = {
+// ── Fuse.js 索引設定 ──────────────────────────────────────────────────────────
+// qa 條目：question + topic 雙重加權；threshold 0.38（嚴格，避免假陽性）
+const fuseOptionsQA: IFuseOptions<Entry> = {
   keys: [
-    { name: 'question',   weight: 0.40 },
-    { name: 'topic',      weight: 0.25 },
-    { name: 'conclusion', weight: 0.15 },
-    { name: 'detail',     weight: 0.10 },
-    { name: 'deficiency', weight: 0.05 },
-    { name: 'prohibited', weight: 0.05 },
+    { name: 'question',   weight: 0.45 },
+    { name: 'topic',      weight: 0.35 },
+    { name: 'conclusion', weight: 0.12 },
+    { name: 'detail',     weight: 0.08 },
   ],
-  threshold: 0.5,      // 0 = 完全匹配，1 = 全部匹配
-  distance: 200,
+  threshold: 0.38,
+  distance: 150,
   includeScore: true,
-  useExtendedSearch: false,
+  ignoreLocation: true,
+  minMatchCharLength: 3,  // 至少 3 字才算命中，防止偶發 2 字誤配
+}
+
+// regulation 條目：只在 qa 無結果時使用，threshold 寬鬆一點
+const fuseOptionsReg: IFuseOptions<Entry> = {
+  keys: [
+    { name: 'topic',    weight: 0.50 },
+    { name: 'detail',   weight: 0.30 },
+    { name: 'question', weight: 0.20 },
+  ],
+  threshold: 0.35,
+  distance: 150,
+  includeScore: true,
   ignoreLocation: true,
   minMatchCharLength: 2,
 }
@@ -128,8 +140,8 @@ export interface SearchOptions {
 /**
  * 主搜尋函式：
  * 1. 偵測縣市/類組（可由呼叫端覆蓋）
- * 2. 先精確過濾縣市
- * 3. Fuse.js 模糊搜尋 topic + question + conclusion 等欄位
+ * 2. 縣市過濾（精確）
+ * 3. 先搜 qa 條目；若結果不足再補 regulation 條目
  * 4. 回傳最多 topK 筆
  */
 export function search(query: string, opts: SearchOptions = {}): Entry[] {
@@ -139,28 +151,49 @@ export function search(query: string, opts: SearchOptions = {}): Entry[] {
   const group  = opts.group  !== undefined ? opts.group  : detectGroup(query)
   const topK   = opts.topK ?? 5
 
-  // 展開同義詞讓 Fuse 搜尋更廣
   const expandedQuery = expandQuery(query)
 
-  // 縣市過濾：只保留「相同縣市」或「全國通用」的條目
+  // 縣市過濾
   let pool = county
     ? allEntries.filter(e => e.county === county || e.county === '全國通用')
     : allEntries
 
-  // 類組過濾：只保留「相同類組」或 group === null（全類組）
+  // 類組過濾
   if (group) {
     pool = pool.filter(e => e.group === null || e.group === group)
   }
 
   if (pool.length === 0) return []
 
-  const fuse = new Fuse(pool, fuseOptions)
-  const results = fuse.search(expandedQuery, { limit: topK * 2 })
+  // 先搜 qa 條目
+  const qaPool  = pool.filter(e => e.type === 'qa')
+  const regPool = pool.filter(e => e.type === 'regulation')
 
-  // 過濾掉分數太低的結果（Fuse score 越低越好，0 = 完美）
-  const scored = results.filter(r => (r.score ?? 1) < 0.6)
+  const qaRaw = new Fuse(qaPool, fuseOptionsQA)
+    .search(expandedQuery, { limit: topK * 3 })
+    .filter(r => (r.score ?? 1) < 0.38)
 
-  return scored.slice(0, topK).map(r => r.item)
+  // 縣市指定時，精確縣市的條目得分提升（乘 0.75，Fuse 分數越低越好）
+  const qaScored = county
+    ? qaRaw.map(r => ({
+        item: r.item,
+        score: r.item.county === county ? (r.score ?? 0) * 0.75 : (r.score ?? 0),
+      })).sort((a, b) => a.score - b.score)
+    : qaRaw.map(r => ({ item: r.item, score: r.score ?? 0 }))
+
+  const qaHits = qaScored.slice(0, topK).map(r => r.item)
+
+  if (qaHits.length >= topK) return qaHits
+
+  // qa 不足才補 regulation
+  const need = topK - qaHits.length
+  const regHits = new Fuse(regPool, fuseOptionsReg)
+    .search(expandedQuery, { limit: need * 3 })
+    .filter(r => (r.score ?? 1) < 0.35)
+    .map(r => r.item)
+    .slice(0, need)
+
+  return [...qaHits, ...regHits]
 }
 
 // ── 分類結果，決定 UI 狀態 ──────────────────────────────────────────────────
@@ -247,17 +280,22 @@ export function searchFiltered(opts: {
     pool = pool.filter(e => !e.stage || allowed.includes(e.stage))
   }
 
+  // 無文字查詢：qa 優先，依風險排序
   if (!query.trim()) {
-    // 無文字查詢：依風險排序後回傳
     const riskOrder: Record<string, number> = { '高': 0, '中': 1, '低': 2 }
     return [...pool]
-      .sort((a, b) => (riskOrder[a.risk] ?? 3) - (riskOrder[b.risk] ?? 3))
+      .sort((a, b) => {
+        const typeDiff = (a.type === 'qa' ? 0 : 1) - (b.type === 'qa' ? 0 : 1)
+        if (typeDiff !== 0) return typeDiff
+        return (riskOrder[a.risk] ?? 3) - (riskOrder[b.risk] ?? 3)
+      })
       .slice(0, topK)
   }
 
-  const fuse = new Fuse(pool, fuseOptions)
-  return fuse.search(expandQuery(query), { limit: topK })
-    .filter(r => (r.score ?? 1) < 0.7)
+  const qaPool = pool.filter(e => e.type === 'qa')
+  return new Fuse(qaPool, fuseOptionsQA)
+    .search(expandQuery(query), { limit: topK })
+    .filter(r => (r.score ?? 1) < 0.45)
     .map(r => r.item)
 }
 
