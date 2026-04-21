@@ -221,6 +221,13 @@ export function classify(query: string, forceCounty?: string | null): SearchPhas
   const conclusions = new Set(results.map(e => e.conclusion))
   if (conclusions.size === 1) return { kind: 'answer', entry: results[0] }
 
+  // 全國通用條目排第一 → 直接回傳，無需詢問縣市
+  // 搜尋引擎已依分數排名，第一名即為最佳解答
+  if (results[0].county === '全國通用') {
+    return { kind: 'answer', entry: results[0] }
+  }
+
+  // 未指定縣市，且結果跨兩個以上縣市 → 才詢問縣市
   if (!county) {
     const counties = [...new Set(
       results.map(e => e.county).filter(c => c !== '全國通用')
@@ -234,15 +241,7 @@ export function classify(query: string, forceCounty?: string | null): SearchPhas
     }
   }
 
-  const topics = [...new Set(results.map(e => e.topic))]
-  if (topics.length >= 2) {
-    return {
-      kind: 'ambiguous',
-      question: { type: 'topic', options: topics.slice(0, 5) },
-      candidates: results,
-    }
-  }
-
+  // 其餘情況信任搜尋引擎排名，回傳第一筆
   return { kind: 'answer', entry: results[0] }
 }
 
